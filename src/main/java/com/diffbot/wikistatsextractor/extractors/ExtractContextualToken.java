@@ -8,22 +8,19 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-
-import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.TokenStream;
-import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.analysis.util.CharArraySet;
 
 import com.diffbot.wikistatsextractor.dumpparser.DumpParser;
 import com.diffbot.wikistatsextractor.util.Util;
+import org.dbpedia.spotlight.db.model.StringTokenizer;
+import org.dbpedia.spotlight.db.model.TextTokenizer;
+import org.dbpedia.spotlight.db.tokenize.TextTokenizerFactory;
+import org.dbpedia.spotlight.model.Text;
+import org.dbpedia.spotlight.model.Token;
+import org.dbpedia.spotlight.model.TokenType;
+import org.dbpedia.spotlight.model.TokenType$;
+import scala.collection.Iterator;
 
 /**
  * extract for each dbpedia entry, the list of tokens that you can find around
@@ -40,9 +37,8 @@ public class ExtractContextualToken {
 	public static int MAX_LENGTH_PARAGRAPH=5000;
 	public static int MAX_LENGTH_SF=80;
 	public static int MIN_LENGTH_SF=2;
-	public static int MAX_NB_TOKEN_SF=4;
+	public static int MAX_NB_TOKEN_SF=6;
 	public static String LANGUAGE="en";
-	public static String ANAYZER_NAME="en.EnglishAnalyzer";
 
 	/** first worker. Given a page, it extract token from each paragraph.
 	 *  Associate each paragraph with a unique id. 
@@ -58,11 +54,8 @@ public class ExtractContextualToken {
 			paragraphHash++;
 			return paragraphHash;
 		}
-		
-		
-		
-		
 
+		
 		/* associate for each resource a list of paragraphs in which they appear */
 		ConcurrentHashMap<String, List<Integer>> paragraphe_per_resource;
 		/* contains all the existing Uris */
@@ -70,16 +63,11 @@ public class ExtractContextualToken {
 		/* contains the redirections */
 		HashMap<String, String> redirections;
 
-		protected Analyzer analyzer;
+		protected StringTokenizer spotlightTokenizer;
 
-		public ECTWorker(CharArraySet stopwords, String analyzer_name, ConcurrentHashMap<String, List<Integer>> paragraphe_per_resource,
+		public ECTWorker(StringTokenizer spotlightTokenizer, ConcurrentHashMap<String, List<Integer>> paragraphe_per_resource,
 				Set<String> existing_uris, HashMap<String, String> redirections) {
-			String analyzer_full_name = "org.apache.lucene.analysis." + analyzer_name;
-			try {
-				analyzer = (Analyzer) Class.forName(analyzer_full_name).getConstructor(CharArraySet.class).newInstance(stopwords);
-			} catch (Exception e) {
-				e.printStackTrace();
-			}
+			this.spotlightTokenizer = spotlightTokenizer;
 			this.paragraphe_per_resource = paragraphe_per_resource;
 			this.existing_uris = existing_uris;
 			this.redirections = redirections;
@@ -97,24 +85,70 @@ public class ExtractContextualToken {
 
 			if (paragraphs != null) {
 
-				
+				HashMap<Util.PairUriSF, Integer> linksInArticle = new HashMap<>();
+				for (String paragraph : paragraphs) {
+					List<Util.PairUriSF> realLinks = Util.getAllSurfaceFormsInString(paragraph, MAX_LENGTH_SF, MIN_LENGTH_SF, MAX_NB_TOKEN_SF, LANGUAGE);
+					for (Util.PairUriSF pusf : realLinks) {
+						Integer count = linksInArticle.get(pusf);
+						if (count == null)
+							linksInArticle.put(pusf, 1);
+						else
+							linksInArticle.put(pusf, 1 + count);
+					}
+				}
+
+				/**
+				 * Second run: duplicates per article
+				 */
+
+				HashMap<String, Util.PairUriSF> bestLinkForSF = new HashMap<>();
+				for (Map.Entry<Util.PairUriSF, Integer> uriSFAndCount : linksInArticle.entrySet()) {
+					String sf = uriSFAndCount.getKey().surface_form;
+					if (bestLinkForSF.containsKey(sf)) {
+						if (uriSFAndCount.getValue() >= linksInArticle.get(bestLinkForSF.get(sf))) {
+							//If this is URI occurred more often with the SF, we use this one as the main link
+							bestLinkForSF.put(sf, uriSFAndCount.getKey());
+						}
+					} else {
+						bestLinkForSF.put(sf, uriSFAndCount.getKey());
+					}
+				}
+
+
 				for (String text_paragraph : paragraphs) {
-					
+
 					StringBuilder sb = new StringBuilder();
-					
+
 					// a paragraphe that is more than 5000 chars? Bullshit.
 					if (text_paragraph.length()>MAX_LENGTH_PARAGRAPH)
 						continue;
 
 					/** look in the paragraph for any links */
-					List<Util.PairUriSF> surface_forms = Util.getSurfaceFormsInString(text_paragraph, MAX_LENGTH_SF,
-							MIN_LENGTH_SF, MAX_NB_TOKEN_SF, LANGUAGE);
+					List<Util.PairUriSF> real_surface_forms = Util.getSurfaceFormsInString(text_paragraph, MAX_LENGTH_SF, MIN_LENGTH_SF, MAX_NB_TOKEN_SF, LANGUAGE);
+
+					List<String> knownSurfaceFormsInString = Util.getKnownSurfaceFormsInParagraph(text_paragraph, bestLinkForSF.keySet(), MAX_NB_TOKEN_SF, spotlightTokenizer);
+					List<Util.PairUriSF> surface_forms = new ArrayList<>();
+					HashSet<Util.PairUriSF> seenPairs = new HashSet<>();
+
+					for (String sf : knownSurfaceFormsInString) {
+						Util.PairUriSF pairUriSF = bestLinkForSF.get(sf);
+						seenPairs.add(pairUriSF);
+						surface_forms.add(pairUriSF);
+					}
+
+					if (real_surface_forms != null) {
+						for (Util.PairUriSF pairUriSF : real_surface_forms) {
+							if (!seenPairs.contains(pairUriSF)) {
+								surface_forms.add(pairUriSF);
+							}
+						}
+					}
 
 					/**
 					 * if we haven't found any surface form, this paragraph is
 					 * useless and we don't anaylze it
 					 */
-					if (surface_forms == null) {
+					if (surface_forms.isEmpty()) {
 						continue;
 					}
 
@@ -145,7 +179,7 @@ public class ExtractContextualToken {
 							}
 						}
 					}
-					
+
 					/** all right, last check, does the uri exist. If not, we remove it from the list */
 					for (int i=surface_forms.size()-1; i>=0; i--){
 						Util.PairUriSF pusf=surface_forms.get(i);
@@ -154,12 +188,12 @@ public class ExtractContextualToken {
 						if (!existing_uris.contains(escaped_uri))
 							surface_forms.remove(i);
 					}
-					
+
 					if (surface_forms.size()==0) {
 						continue;
 					}
 
-					
+
 
 					/** get the Hashcode of the paragraph */
 					int hash = ECTWorker.getNewHash();
@@ -171,21 +205,18 @@ public class ExtractContextualToken {
 					 */
 					String clean_paragraph_text = Util.cleanSurfaceForms(text_paragraph);
 
+					Iterator<String> tokenIterator = this.spotlightTokenizer.tokenize(clean_paragraph_text).iterator();
+
 					/** tokenize here */
-					try {
-						TokenStream stream = analyzer.tokenStream("paragraph", clean_paragraph_text);
-						stream.reset();
-						while (stream.incrementToken()) {
-							String token = stream.getAttribute(CharTermAttribute.class).toString();
-							sb.append(',');
-							sb.append(',');
-							sb.append(token);
-						}
-						sb.append('\n');
-						stream.close();
-					} catch (IOException e) {
-						e.printStackTrace();
+					while (tokenIterator.hasNext()) {
+						String token = tokenIterator.next();
+						if (token.length() <= 2 || token.contains("\n")) continue;
+						sb.append(',');
+						sb.append(',');
+						sb.append(token);
 					}
+					sb.append('\n');
+
 					writeInOutput(sb.toString());
 
 					/** add the surface forms to the collection */
@@ -392,43 +423,25 @@ public class ExtractContextualToken {
 	 * output that is wikipedia uri,{(token,count),(token,count)...}
 	 * 
 	 * @param path_to_dump
-	 * @param analyzer_name
-	 * @param path_to_stopwords
 	 * @param path_to_output
 	 */
-	public static void extractContextualToken(String path_to_dump, String tmp_folder, String path_to_stopwords, String path_to_output,
-			String path_to_uri_count, String path_to_redirections) {
+	public static void extractContextualToken(String path_to_dump, String tmp_folder, String path_to_output,
+			String path_to_uri_count, String path_to_redirections, TextTokenizerFactory spotlightTokenizerFactory) {
 		String path_to_tmp_paragraphs = tmp_folder+"tmp_paragraphes";
 		String path_to_tmp_ref = tmp_folder+"tmp_referencess";
 		/*************** FIRST STEP ************/
-
-		// prepare the list of stopwords
-		CharArraySet stopwords = new CharArraySet(0, false);
-		try {
-			BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(new File(path_to_stopwords)), "UTF8"), 16 * 1024);
-			String line = br.readLine();
-			while (line != null) {
-				stopwords.add(line);
-				line = br.readLine();
-			}
-			br.close();
-		} catch (IOException ioe) {
-			ioe.printStackTrace();
-		}
-		;
 
 		// import the Set of existing Uri, and the redirection page. This will
 		// be used to
 		// redirect the uri we find in paragraphs
 		Set<String> existing_Uri = new HashSet<String>();
 		HashMap<String, String> redirections = new HashMap<String, String>();
-		String prefix = "http://dbpedia.org/resource/";
 		try {
 			BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(new File(path_to_uri_count)), "UTF8"), 16 * 1024);
 			String line = br.readLine();
 			while (line != null) {
 				String[] split = line.split("\t");
-				String uri = split[0].substring(prefix.length());
+				String uri = split[0].split("/", 5)[4];
 				existing_Uri.add(uri);
 				line = br.readLine();
 			}
@@ -454,8 +467,8 @@ public class ExtractContextualToken {
 		ConcurrentHashMap<String, List<Integer>> storage_references = new ConcurrentHashMap<String, List<Integer>>(5000000, 0.5f, 6);
 		DumpParser dp = new DumpParser();
 		dp.setAnOutput(path_to_tmp_paragraphs);
-		for (int i = 0; i < 6; i++) {
-			dp.addWorker(new ECTWorker(stopwords, ANAYZER_NAME, storage_references, existing_Uri, redirections));
+		for (int i = 0; i < 5; i++) {
+			dp.addWorker(new ECTWorker(spotlightTokenizerFactory.createTokenizer().getStringTokenizer(), storage_references, existing_Uri, redirections));
 		}
 
 		// launch the extraction
@@ -516,11 +529,6 @@ public class ExtractContextualToken {
 		dp.extract(path_to_tmp_ref);
 		System.out.println("last step " + (System.currentTimeMillis() - start));
 
-		
-
 	}
 
-	public static void main(String[] args) {
-
-	}
 }

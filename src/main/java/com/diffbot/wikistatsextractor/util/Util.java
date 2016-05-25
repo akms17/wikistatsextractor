@@ -1,13 +1,13 @@
  package com.diffbot.wikistatsextractor.util;
 
+import opennlp.tools.util.Span;
+
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Stack;
+import java.util.*;
 
-/** some Utils methods */
+ /** some Utils methods */
 public class Util {
 
 	/** xml patterns that will be unescaped. Have to be the longest first */
@@ -460,7 +460,7 @@ public class Util {
 							|| pusf.uri.charAt(0) == '-')
 						continue;
 					if (pusf.surface_form.charAt(0) == '&' || pusf.surface_form.charAt(0) == '\"' || pusf.surface_form.charAt(0) == '('
-							|| pusf.surface_form.charAt(0) == '\'' || pusf.surface_form.charAt(0) == '-')
+							|| pusf.surface_form.charAt(0) == '\'' || pusf.surface_form.charAt(0) == '-' || pusf.surface_form.charAt(0) == ' ')
 						continue;
 
 					/**
@@ -549,7 +549,7 @@ public class Util {
 						|| pusf.uri.charAt(0) == '-')
 					continue;
 				if (pusf.surface_form.charAt(0) == '&' || pusf.surface_form.charAt(0) == '\"' || pusf.surface_form.charAt(0) == '('
-						|| pusf.surface_form.charAt(0) == '\'' || pusf.surface_form.charAt(0) == '-')
+						|| pusf.surface_form.charAt(0) == '\'' || pusf.surface_form.charAt(0) == '-' || pusf.surface_form.charAt(0) == ' ')
 					continue;
 
 				/**
@@ -564,6 +564,33 @@ public class Util {
 
 		}
 		return output;
+	}
+
+	 public static List<String> getKnownSurfaceFormsInParagraph(String paragraph, Set<String> allowedSFs, int MAX_NB_TOKEN_SF, org.dbpedia.spotlight.db.model.StringTokenizer spotlightTokenizer) {
+		 List<String> knownSurfaceForms = new ArrayList<>();
+		 String clean_paragraph_text = Util.cleanSurfaceForms(paragraph);
+
+		 Span[] spans = spotlightTokenizer.tokenizePos(clean_paragraph_text);
+		 for (int i = 0; i < spans.length; i++) {
+			 for (int j = 0; j < MAX_NB_TOKEN_SF-1; j++) {
+				 if (i+j < spans.length) {
+					 String substr = clean_paragraph_text.substring(spans[i].getStart(), spans[i + j].getEnd());
+					 if (allowedSFs.contains(substr)) {
+						 knownSurfaceForms.add(substr);
+					 }
+				 }
+			 }
+		 }
+
+		 return knownSurfaceForms;
+	 }
+
+	public static List<String> getKnownSurfaceFormsInParagraphs(List<String> paragraphs, Set<String> allowedSFs, int MAX_NB_TOKEN_SF, org.dbpedia.spotlight.db.model.StringTokenizer spotlightTokenizer) {
+		List<String> knownSurfaceForms = new ArrayList<>();
+		for (String paragraph : paragraphs) {
+			knownSurfaceForms.addAll(getKnownSurfaceFormsInParagraph(paragraph, allowedSFs, MAX_NB_TOKEN_SF, spotlightTokenizer));
+		}
+		return knownSurfaceForms;
 	}
 
 	public static String cleanSurfaceForms(String s) {

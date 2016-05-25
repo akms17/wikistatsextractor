@@ -16,6 +16,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import com.diffbot.wikistatsextractor.dumpparser.DumpParser;
 import com.diffbot.wikistatsextractor.util.Tokenizer;
 import com.diffbot.wikistatsextractor.util.Util;
+import opennlp.tools.util.Span;
+import org.dbpedia.spotlight.db.model.StringTokenizer;
+import org.dbpedia.spotlight.db.tokenize.TextTokenizerFactory;
 
 /**
  * Another important part of spotlight, produce a file, 
@@ -27,17 +30,16 @@ import com.diffbot.wikistatsextractor.util.Util;
  */
 public class ExtractAllNGrams {
 	/** max nb token that a surface form can have */
-	public static int MAX_NB_TOKEN = 4;
-	/** local default language */
-	public static String LOCALE="en_US";
-	/** local language */
-	public static String LANGUAGE="en";
+	public static int MAX_NB_TOKEN = 6;
 
 	public static class AllNGramsWorker extends DumpParser.Worker {
 		ConcurrentHashMap<String, Integer> all_interesting_sf;
 
-		public AllNGramsWorker(ConcurrentHashMap<String, Integer> all_interesting_sf) {
+		protected StringTokenizer spotlightTokenizer;
+
+		public AllNGramsWorker(ConcurrentHashMap<String, Integer> all_interesting_sf, StringTokenizer spotlightTokenizer) {
 			this.all_interesting_sf = all_interesting_sf;
+			this.spotlightTokenizer = spotlightTokenizer;
 		}
 
 		@Override
@@ -48,23 +50,14 @@ public class ExtractAllNGrams {
 				return;
 
 			for (String paragraph : paragraphs) {
-				ArrayList<Integer> delimiters = Tokenizer.getDelimiters2(paragraph, LANGUAGE);
-				for (int i = 0; i < delimiters.size(); i += 2) {
-					for (int j = 0; j < MAX_NB_TOKEN; j++) {
-						if (i < delimiters.size() - j * 2 - 1) {
-							String substr = paragraph.substring(delimiters.get(i), delimiters.get(i + 1 + 2 * j));
+				Span[] spans = spotlightTokenizer.tokenizePos(paragraph);
+				for (int i = 0; i < spans.length; i++) {
+					for (int j = 0; j < MAX_NB_TOKEN-1; j++) {
+						if (i+j < spans.length) {
+							String substr = paragraph.substring(spans[i].getStart(), spans[i+j].getEnd());
 							Integer count=all_interesting_sf.get(substr);
 							if (count!=null) {
 									all_interesting_sf.put(substr, 1 + count);
-							}
-							
-							// special case of the dot (Apple Inc.), if the next char is a dot, we also check it
-							if (delimiters.get(i + 1 + 2 * j)<paragraph.length() && paragraph.charAt(delimiters.get(i + 1 + 2 * j))=='.'){
-								substr = paragraph.substring(delimiters.get(i), delimiters.get(i + 1 + 2 * j)+1);
-								count=all_interesting_sf.get(substr);
-								if (count!=null) {
-										all_interesting_sf.put(substr, 1 + count);
-								}
 							}
 						}
 					}
@@ -74,7 +67,8 @@ public class ExtractAllNGrams {
 		}
 	}
 
-	public static void extractAllNGrams(String path_to_wiki_dump, String path_to_surface_form_file, String path_to_output) {
+	public static void extractAllNGrams(String path_to_wiki_dump, String path_to_surface_form_file, String path_to_output,
+			TextTokenizerFactory spotlightTokenizerFactory) {
 		/** get all the surface forms */
 		ConcurrentHashMap<String, Integer> surface_forms=null;
 		/** also keep in mind the surface forms that are all in lower case, for later */
@@ -109,7 +103,7 @@ public class ExtractAllNGrams {
 		/** launch the dump Parsing */
 		DumpParser dp = new DumpParser();
 		for (int i = 0; i < 7; i++)
-			dp.addWorker(new AllNGramsWorker(surface_forms));
+			dp.addWorker(new AllNGramsWorker(surface_forms, spotlightTokenizerFactory.createTokenizer().getStringTokenizer()));
 		dp.extract(path_to_wiki_dump);
 
 		/** creates the file we want */
@@ -134,23 +128,6 @@ public class ExtractAllNGrams {
 		} catch (IOException ioe) {
 		}
 
-	}
-
-	public static void main(String[] args) {
-		long start = System.currentTimeMillis();
-		int level = 0;
-		switch (level) {
-		case 0:
-			extractAllNGrams("enwiki_extract", "tmp_sf_counts_extract", "ngrams_extract");
-			break;
-		case 1:
-			extractAllNGrams("frwiki-full", "tmp_sf_counts_fr", "ngrams_fr");
-			break;
-		case 2:
-			extractAllNGrams("enwiki-full", "tmp_sf_counts_en", "ngrams_en");
-			break;
-		}
-		System.out.println(System.currentTimeMillis() - start);
 	}
 
 }
