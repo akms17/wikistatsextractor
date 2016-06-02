@@ -7,7 +7,21 @@
 	<version>0.1-SNAPSHOT</version>
 	<name>wikistatsextractor</name>
 	<url>http://maven.apache.org</url>
+
+	<properties>
+		<!-- Scala versions -->
+		<scala.major>2.10</scala.major>
+		<scala.minor>4</scala.minor>
+		<scala.version>${scala.major}.${scala.minor}</scala.version>
+	</properties>
+
+
 	<dependencies>
+		<dependency>
+			<groupId>org.scala-lang</groupId>
+			<artifactId>scala-library</artifactId>
+			<version>${scala.version}</version>
+		</dependency>
 		<dependency>
 			<groupId>junit</groupId>
 			<artifactId>junit</artifactId>
@@ -31,11 +45,33 @@
 			<artifactId>commons-compress</artifactId>
 			<version>1.10</version>
 		</dependency>
+
+		<!-- Test dependencies -->
+		<dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<version>4.12</version>
+		</dependency>
+
 	</dependencies>
 
 	<build>
 		<pluginManagement>
 			<plugins>
+				<plugin>
+					<groupId>net.alchim31.maven</groupId>
+					<artifactId>scala-maven-plugin</artifactId>
+					<executions>
+						<execution>
+							<id>scala-compile-first</id>
+							<phase>process-resources</phase>
+							<goals>
+								<goal>add-source</goal>
+								<goal>compile</goal>
+							</goals>
+						</execution>
+					</executions>
+				</plugin>
 				<plugin>
 					<groupId>org.apache.maven.plugins</groupId>
 					<artifactId>maven-compiler-plugin</artifactId>
