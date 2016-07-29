@@ -10,8 +10,8 @@
 
 	<properties>
 		<!-- Scala versions -->
-		<scala.major>2.10</scala.major>
-		<scala.minor>4</scala.minor>
+		<scala.major>2.11</scala.major>
+		<scala.minor>7</scala.minor>
 		<scala.version>${scala.major}.${scala.minor}</scala.version>
 	</properties>
 
@@ -32,7 +32,7 @@
 		<dependency>
 			<groupId>org.dbpedia.spotlight</groupId>
 			<artifactId>core</artifactId>
-			<version>0.7</version>
+			<version>0.8-SNAPSHOT</version>
 		</dependency>
 
 		<dependency>
@@ -112,22 +112,9 @@
 			<plugin>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<configuration>
-					<source>1.7</source>
-					<target>1.7</target>
+					<source>1.8</source>
+					<target>1.8</target>
 				</configuration>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-shade-plugin</artifactId>
-				<version>1.6</version>
-				<executions>
-					<execution>
-						<phase>package</phase>
-						<goals>
-							<goal>shade</goal>
-						</goals>
-					</execution>
-				</executions>
 			</plugin>
 			<plugin>
 				<groupId>org.codehaus.mojo</groupId>
@@ -146,6 +133,39 @@
 			</plugin>
 		</plugins>
 	</build>
+
+	<profiles>
+		<profile>
+			<id>shade</id>
+			<activation>
+				<property><name>shade</name></property>
+			</activation>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-shade-plugin</artifactId>
+						<version>1.6</version>
+						<configuration>
+							<minimizeJar>false</minimizeJar>
+							<createDependencyReducedPom>true</createDependencyReducedPom>
+							<shadedArtifactAttached>true</shadedArtifactAttached>
+							<!--<finalName>${project.artifactId}</finalName>-->
+							<finalName>${project.artifactId}</finalName>
+						</configuration>
+						<executions>
+							<execution>
+								<phase>package</phase>
+								<goals>
+									<goal>shade</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 
 </project>
 

@@ -140,6 +140,10 @@ public class DumpParser {
 		workers.add(w);
 	}
 
+	public List<Worker> getWorkers() {
+		return workers;
+	}
+
 	public int getNbProcessor() {
 		return Math.min(Runtime.getRuntime().availableProcessors(), 10);
 	}
@@ -419,6 +423,7 @@ public class DumpParser {
 									if (!isReaderActive[0]
 											&& all_workers_finished
 											&& output.isEmpty()) {
+										System.out.println("Reader has finished and all workers have finished");
 										break;
 									}
 								} else {
@@ -448,6 +453,7 @@ public class DumpParser {
 		}
 
 		/** We are done */
+		System.out.println();
 		System.out.println("done in " + (System.currentTimeMillis() - start)
 				+ "ms");
 	}

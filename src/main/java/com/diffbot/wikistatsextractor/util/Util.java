@@ -635,6 +635,9 @@ public class Util {
 			}
 			if (nb_brackets == 0) {
 				output.append(c);
+				if (i == len - 2) {
+					output.append(s.charAt(i + 1));
+				}
 			}
 		}
 		return output.toString();

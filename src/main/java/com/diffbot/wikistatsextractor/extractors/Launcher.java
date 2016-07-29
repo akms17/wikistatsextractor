@@ -6,6 +6,9 @@ import org.dbpedia.spotlight.db.tokenize.TextTokenizerFactory;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * launcher $lang $locale $stemmer $dump-file $stopwords
+ */
 public class Launcher {
 	
 	public static void main(String[] args) throws ParseException {

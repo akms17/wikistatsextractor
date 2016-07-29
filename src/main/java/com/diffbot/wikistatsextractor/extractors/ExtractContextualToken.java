@@ -10,6 +10,8 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.UnaryOperator;
 
 import com.diffbot.wikistatsextractor.dumpparser.DumpParser;
 import com.diffbot.wikistatsextractor.util.Util;
@@ -21,6 +23,8 @@ import org.dbpedia.spotlight.model.Token;
 import org.dbpedia.spotlight.model.TokenType;
 import org.dbpedia.spotlight.model.TokenType$;
 import scala.collection.Iterator;
+
+import static com.diffbot.wikistatsextractor.extractors.ExtractSFAndRedirections.NB_WORKERS;
 
 /**
  * extract for each dbpedia entry, the list of tokens that you can find around
@@ -55,9 +59,9 @@ public class ExtractContextualToken {
 			return paragraphHash;
 		}
 
-		
+
 		/* associate for each resource a list of paragraphs in which they appear */
-		ConcurrentHashMap<String, List<Integer>> paragraphe_per_resource;
+		ConcurrentHashMap<String, AtomicReference<List<Integer>>> paragraphe_per_resource;
 		/* contains all the existing Uris */
 		Set<String> existing_uris;
 		/* contains the redirections */
@@ -65,7 +69,7 @@ public class ExtractContextualToken {
 
 		protected StringTokenizer spotlightTokenizer;
 
-		public ECTWorker(StringTokenizer spotlightTokenizer, ConcurrentHashMap<String, List<Integer>> paragraphe_per_resource,
+		public ECTWorker(StringTokenizer spotlightTokenizer, ConcurrentHashMap<String, AtomicReference<List<Integer>>> paragraphe_per_resource,
 				Set<String> existing_uris, HashMap<String, String> redirections) {
 			this.spotlightTokenizer = spotlightTokenizer;
 			this.paragraphe_per_resource = paragraphe_per_resource;
@@ -81,7 +85,7 @@ public class ExtractContextualToken {
 			 * reference, but let the links
 			 */
 
-			List<String> paragraphs = Util.getCleanTextFromPage(page, true, true, false,true);
+			List<String> paragraphs = Util.getCleanTextFromPage(page, true, true, false, true);
 
 			if (paragraphs != null) {
 
@@ -119,8 +123,8 @@ public class ExtractContextualToken {
 
 					StringBuilder sb = new StringBuilder();
 
-					// a paragraphe that is more than 5000 chars? Bullshit.
-					if (text_paragraph.length()>MAX_LENGTH_PARAGRAPH)
+					// a paragraph that is more than 5000 chars? Bullshit.
+					if (text_paragraph.length() > MAX_LENGTH_PARAGRAPH)
 						continue;
 
 					/** look in the paragraph for any links */
@@ -181,18 +185,17 @@ public class ExtractContextualToken {
 					}
 
 					/** all right, last check, does the uri exist. If not, we remove it from the list */
-					for (int i=surface_forms.size()-1; i>=0; i--){
-						Util.PairUriSF pusf=surface_forms.get(i);
-						pusf.uri=Util.upperifyFirstChar(pusf.uri);
-						String escaped_uri=Util.escapeWiki(pusf.uri);
+					for (int i = surface_forms.size() - 1; i >= 0; i--) {
+						Util.PairUriSF pusf = surface_forms.get(i);
+						pusf.uri = Util.upperifyFirstChar(pusf.uri);
+						String escaped_uri = Util.escapeWiki(pusf.uri);
 						if (!existing_uris.contains(escaped_uri))
 							surface_forms.remove(i);
 					}
 
-					if (surface_forms.size()==0) {
+					if (surface_forms.size() == 0) {
 						continue;
 					}
-
 
 
 					/** get the Hashcode of the paragraph */
@@ -221,21 +224,22 @@ public class ExtractContextualToken {
 
 					/** add the surface forms to the collection */
 					for (Util.PairUriSF sf : surface_forms) {
-						List<Integer> paragraph_list = paragraphe_per_resource.get(Util.upperifyFirstChar(sf.uri));
-						if (paragraph_list != null) {
-							synchronized (paragraph_list) {
-								paragraph_list.add(hash);
+						String key = Util.upperifyFirstChar(sf.uri);
+						AtomicReference<List<Integer>> paragraphs_list = paragraphe_per_resource.putIfAbsent(key,
+								new AtomicReference<>(new ArrayList<Integer>() {{
+									add(hash);
+								}}));
+						if (paragraphs_list != null) {
+							synchronized (paragraphs_list) {
+								List<Integer> paras = paragraphs_list.get();
+								paras.add(hash);
+								paragraphs_list.set(paras);
 							}
-						} else {
-							paragraph_list = new ArrayList<Integer>();
-							paragraph_list.add(hash);
-							paragraphe_per_resource.put(sf.uri, paragraph_list);
 						}
 					}
 				}
 
 			}
-
 		}
 	}
 	
@@ -279,15 +283,17 @@ public class ExtractContextualToken {
 					Integer indice_paragraph = Integer.parseInt(split[0]);
 					int[] words_in_paragraph = new int[split.length - 1];
 					for (int i = 1; i < split.length; i++) {
-						Integer indice_word_in_voc = vocabulary_one_way.get(split[i]);
-						if (indice_word_in_voc == null) {
-							// we add this word to the vocabulary
-							int hash=getNewHash();
-							vocabulary_one_way.put(split[i], hash);
-							vocabulary_other_way.put(hash, split[i]);
-							indice_word_in_voc = hash;
+						synchronized (vocabulary_one_way) {
+							Integer indice_word_in_voc = vocabulary_one_way.get(split[i]);
+							if (indice_word_in_voc == null) {
+								// we add this word to the vocabulary
+								int hash = getNewHash();
+								vocabulary_one_way.put(split[i], hash);
+								vocabulary_other_way.put(hash, split[i]);
+								indice_word_in_voc = hash;
+							}
+							words_in_paragraph[i - 1] = indice_word_in_voc;
 						}
-						words_in_paragraph[i - 1] = indice_word_in_voc;
 					}
 					paragraphs[indice_paragraph] = words_in_paragraph;
 				}
@@ -419,7 +425,7 @@ public class ExtractContextualToken {
 	 * the reference_to_paragraphe file contains lines like
 	 * "resource_name,,id_paragraphe_1,,id_paragraphe_2..."
 	 * 
-	 * A second step is then mae to use those two files to compute the final
+	 * A second step is then made to use those two files to compute the final
 	 * output that is wikipedia uri,{(token,count),(token,count)...}
 	 * 
 	 * @param path_to_dump
@@ -427,8 +433,13 @@ public class ExtractContextualToken {
 	 */
 	public static void extractContextualToken(String path_to_dump, String tmp_folder, String path_to_output,
 			String path_to_uri_count, String path_to_redirections, TextTokenizerFactory spotlightTokenizerFactory) {
+
 		String path_to_tmp_paragraphs = tmp_folder+"tmp_paragraphes";
 		String path_to_tmp_ref = tmp_folder+"tmp_referencess";
+
+
+		System.out.println("Triggering first phase of tokenCounts generation");
+
 		/*************** FIRST STEP ************/
 
 		// import the Set of existing Uri, and the redirection page. This will
@@ -449,7 +460,6 @@ public class ExtractContextualToken {
 		} catch (IOException ioe) {
 			ioe.printStackTrace();
 		}
-		;
 		try {
 			BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(new File(path_to_redirections)), "UTF8"), 16 * 1024);
 			String line = br.readLine();
@@ -462,12 +472,12 @@ public class ExtractContextualToken {
 		} catch (IOException ioe) {
 			ioe.printStackTrace();
 		}
-		;
 
-		ConcurrentHashMap<String, List<Integer>> storage_references = new ConcurrentHashMap<String, List<Integer>>(5000000, 0.5f, 6);
+		ConcurrentHashMap<String, AtomicReference<List<Integer>>> storage_references = new ConcurrentHashMap<String, AtomicReference<List<Integer>>>(5000000, 0.5f, 6);
 		DumpParser dp = new DumpParser();
 		dp.setAnOutput(path_to_tmp_paragraphs);
-		for (int i = 0; i < 5; i++) {
+		System.out.println("Starting Context Token extraction workers");
+		for (int i = 0; i < NB_WORKERS; i++) {
 			dp.addWorker(new ECTWorker(spotlightTokenizerFactory.createTokenizer().getStringTokenizer(), storage_references, existing_Uri, redirections));
 		}
 
@@ -482,7 +492,7 @@ public class ExtractContextualToken {
 			all_resources.addAll(storage_references.keySet());
 			Collections.sort(all_resources);
 			for (String resource : all_resources) {
-				List<Integer> para_ids = storage_references.get(resource);
+				List<Integer> para_ids = storage_references.get(resource).get();
 				if (para_ids.size() < MIN_NB_CONTEXTS)
 					continue;
 				StringBuilder sb = new StringBuilder();
@@ -498,8 +508,10 @@ public class ExtractContextualToken {
 			bw.close();
 		} catch (IOException ioe) {
 		}
+
 		storage_references = null;
-		System.out.println("storage took " + (System.currentTimeMillis() - start));
+
+		System.out.println("Finished phase 1 , storage took " + (System.currentTimeMillis() - start));
 		start = System.currentTimeMillis();
 		System.gc();
 
@@ -511,23 +523,25 @@ public class ExtractContextualToken {
 		ConcurrentHashMap<Integer, String> vocabulary_other_way = new ConcurrentHashMap<Integer, String>(200000,0.5f,6);
 		int[][] paragraphs = new int[ECTWorker.getNewHash()][];
 		dp = new DumpParser();
-		for (int i = 0; i < 6; i++) {
+		System.out.println("Starting Vocab builder workers");
+		for (int i = 0; i < NB_WORKERS; i++) {
 			dp.addWorker(new VocabularyBuilderWorker(vocabulary_one_way, vocabulary_other_way, paragraphs));
 		}
 		dp.setSplitByNumberOfLine(true);
 		dp.extract(path_to_tmp_paragraphs);
-		System.out.println("building voc " + (System.currentTimeMillis() - start));
+		System.out.println("building voc took: " + (System.currentTimeMillis() - start) + "ms");
 		
 		
 		// and build the final file
 		dp = new DumpParser();
-		for (int i = 0; i < 6; i++) {
+		System.out.println("Starting Final Context Builder workers");
+		for (int i = 0; i < NB_WORKERS; i++) {
 			dp.addWorker(new ContextBuilder(vocabulary_one_way, vocabulary_other_way, paragraphs));
 		}
 		dp.setAnOutput(path_to_output);
 		dp.setSplitByNumberOfLine(true);
 		dp.extract(path_to_tmp_ref);
-		System.out.println("last step " + (System.currentTimeMillis() - start));
+		System.out.println("last step took: " + (System.currentTimeMillis() - start) + "ms");
 
 	}
 
